@@ -3,65 +3,43 @@ import TelegramBot from "node-telegram-bot-api";
 import cors from "cors";
 
 const app = express();
-
-// Enable CORS for your website
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type']
-}));
-
+app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
 const token = process.env.BOT_TOKEN;
-
-// Initialize Bot
-let bot;
-if (token) {
-    bot = new TelegramBot(token, { polling: true });
-    bot.on("polling_error", (err) => console.log("Bot Error:", err.message));
-}
+const bot = new TelegramBot(token, { polling: true });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log("✅ Server successfully started on port " + PORT);
-});
-
-app.get("/", (req, res) => {
-    res.send("<h2>Bot API Status: ONLINE</h2>");
+    console.log("✅ Debug Server started on port " + PORT);
 });
 
 app.post("/getlink", async (req, res) => {
-    if (!bot) {
-        return res.status(500).json({ success: false, error: "Bot not initialized." });
-    }
-
-    const { channelId } = req.body;
+    const { channelId, userId } = req.body;
     const targetChannel = channelId || process.env.GROUP_ID;
 
-    // Safety check for Channel ID format
+    // This prints to your Railway "Deploy Logs"
+    console.log("LOG: Attempting link for Channel ID: " + targetChannel);
+
     if (!targetChannel || !targetChannel.toString().startsWith('-')) {
-        return res.status(400).json({ 
-            success: false, 
-            error: "Invalid Channel ID format. It must start with -100" 
-        });
+        return res.status(400).json({ success: false, error: "Malformed ID: " + targetChannel });
     }
 
     try {
-        // Method 1: Try with 1-person limit
         const link = await bot.createChatInviteLink(targetChannel, {
             expire_date: Math.floor(Date.now() / 1000) + 600,
             member_limit: 1
         });
         res.json({ success: true, invite_link: link.invite_link });
-
     } catch (err) {
-        // Method 2: Fallback (Retry without member_limit)
+        console.log("LOG: Telegram rejected ID " + targetChannel + " - Error: " + err.message);
+        
+        // Fallback for broadcast channels
         try {
-            const fallbackLink = await bot.createChatInviteLink(targetChannel, {
+            const fallback = await bot.createChatInviteLink(targetChannel, {
                 expire_date: Math.floor(Date.now() / 1000) + 600
             });
-            res.json({ success: true, invite_link: fallbackLink.invite_link });
+            res.json({ success: true, invite_link: fallback.invite_link });
         } catch (finalErr) {
             res.status(500).json({ success: false, error: finalErr.message });
         }
