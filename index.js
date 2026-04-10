@@ -10,19 +10,17 @@ app.use(express.json());
 const PORT = process.env.PORT || 8080;
 const DB_FILE = "./links.json";
 
-// 1. START THE WEB SERVER FIRST
+// 1. START THE WEB SERVER
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server successfully started on port ${PORT}`);
 });
 
 // 2. HEALTH CHECK PAGE
 app.get("/", (req, res) => {
-  const hasToken = !!process.env.BOT_TOKEN;
-  const hasGroup = !!process.env.GROUP_ID;
   res.send(`
     <h2>Server is LIVE!</h2>
-    <p>Bot Token Configured: <b>${hasToken ? "YES ✅" : "NO ❌ (Check Railway Variables)"}</b></p>
-    <p>Group ID Configured: <b>${hasGroup ? "YES ✅" : "NO ❌ (Check Railway Variables)"}</b></p>
+    <p>Multiple Channel Routing: <b>ACTIVE ✅</b></p>
+    <p>Bot Token Configured: <b>${!!process.env.BOT_TOKEN ? "YES ✅" : "NO ❌"}</b></p>
   `);
 });
 
@@ -37,7 +35,7 @@ function saveDB(data) {
 
 // 3. INITIALIZE BOT SAFELY
 const token = process.env.BOT_TOKEN;
-const GROUP_ID = process.env.GROUP_ID;
+const DEFAULT_GROUP_ID = process.env.GROUP_ID; // Kept just in case a fallback is needed
 let bot;
 
 if (token) {
@@ -48,28 +46,12 @@ if (token) {
       console.log("⚠️ Telegram Polling Error:", error.message);
     });
 
-    bot.onText(/\/getlink/, async (msg) => {
-      const userId = msg.from.id;
-      try {
-        const res = await bot.createChatInviteLink(GROUP_ID, {
-          member_limit: 1,
-          expire_date: Math.floor(Date.now() / 1000) + 600
-        });
-        const db = loadDB();
-        db[res.invite_link] = { userId };
-        saveDB(db);
-        
-        // Fixed the syntax error here:
-        bot.sendMessage(userId, `Your link:\n${res.invite_link}`);
-        
-      } catch (err) {
-        console.error("Bot command error:", err.message);
-      }
-    });
-
     bot.on("chat_member", async (update) => {
       const newMember = update.new_chat_member;
       const oldMember = update.old_chat_member;
+      
+      // FIX: Get the exact ID of the specific group the user just joined
+      const currentChatId = update.chat.id; 
 
       if (newMember.status === "member" && oldMember.status === "left") {
         const userId = newMember.user.id;
@@ -78,14 +60,20 @@ if (token) {
         if (!linkEntry) return;
 
         const [link] = linkEntry;
-        await bot.revokeChatInviteLink(GROUP_ID, link);
+        
+        // FIX: Revoke the link specifically from the group they joined
+        try {
+            await bot.revokeChatInviteLink(currentChatId, link);
+        } catch(e) { console.log("Failed to revoke link:", e.message); }
+        
         delete db[link];
         saveDB(db);
 
+        // FIX: Auto-kick them from the exact group they joined after 10 mins
         setTimeout(async () => {
           try {
-            await bot.banChatMember(GROUP_ID, userId);
-            await bot.unbanChatMember(GROUP_ID, userId);
+            await bot.banChatMember(currentChatId, userId);
+            await bot.unbanChatMember(currentChatId, userId);
           } catch(e) {}
         }, 10 * 60 * 1000);
       }
@@ -96,21 +84,31 @@ if (token) {
   }
 }
 
-// 4. API ENDPOINT FOR YOUR WEBSITE
+// 4. API ENDPOINT (Now Supports Unlimited Channels)
 app.post("/getlink", async (req, res) => {
   if (!bot) {
     return res.status(500).json({ success: false, error: "Bot is not running. Check API Token." });
   }
 
+  // Grab the specific channel ID the user requested from the website
   const { userId, channelId } = req.body; 
+  
+  // Use the requested channel, or fallback to the Railway variable if none provided
+  const targetChannel = channelId || DEFAULT_GROUP_ID;
+
+  if (!targetChannel) {
+      return res.status(400).json({ success: false, error: "No Channel ID provided by the website." });
+  }
+
   try {
-    const link = await bot.createChatInviteLink(GROUP_ID, {
+    // FIX: Generate the link for the SPECIFIC channel requested
+    const link = await bot.createChatInviteLink(targetChannel, {
       member_limit: 1,
       expire_date: Math.floor(Date.now() / 1000) + 600
     });
 
     const db = loadDB();
-    db[link.invite_link] = { userId };
+    db[link.invite_link] = { userId, channelId: targetChannel };
     saveDB(db);
 
     res.json({ success: true, invite_link: link.invite_link });
