@@ -3,20 +3,18 @@ import TelegramBot from "node-telegram-bot-api";
 import fs from "fs";
 import cors from "cors"; 
 
-// Use environment variable for token or fallback for testing
 const token = process.env.BOT_TOKEN;
-const bot = new TelegramBot(token, { 
-  polling: {
-    autoStart: true,
-    params: { timeout: 10 } // Helps prevent 409 conflicts during restarts
-  } 
-});
+// Start bot normally
+const bot = new TelegramBot(token, { polling: true });
+
+// CRITICAL FIX: This line prevents the server from crashing if there is a conflict!
+bot.on("polling_error", (error) => console.log("Telegram Error:", error.message));
 
 const GROUP_ID = process.env.GROUP_ID;
 const DB_FILE = "./links.json";
 
 const app = express();
-app.use(cors()); // CRITICAL: Allows your web app to talk to this bot
+app.use(cors()); 
 app.use(express.json());
 
 // Helpers
@@ -27,6 +25,11 @@ function loadDB() {
 function saveDB(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
+
+// 🚀 Health Check (To verify the server is alive)
+app.get("/", (req, res) => {
+  res.send("Bot API is awake and running smoothly!");
+});
 
 // Web API endpoint
 app.post("/getlink", async (req, res) => {
