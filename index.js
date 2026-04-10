@@ -7,10 +7,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 8080; // Fixed to match Railway's default
+const PORT = process.env.PORT || 8080;
 const DB_FILE = "./links.json";
 
-// 1. START THE WEB SERVER FIRST (Prevents "Application failed to respond")
+// 1. START THE WEB SERVER FIRST
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server successfully started on port ${PORT}`);
 });
@@ -58,7 +58,10 @@ if (token) {
         const db = loadDB();
         db[res.invite_link] = { userId };
         saveDB(db);
-        bot.sendMessage(userId, \`Your link:\\n\${res.invite_link}\`);
+        
+        // Fixed the syntax error here:
+        bot.sendMessage(userId, `Your link:\n${res.invite_link}`);
+        
       } catch (err) {
         console.error("Bot command error:", err.message);
       }
