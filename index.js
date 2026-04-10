@@ -9,80 +9,89 @@ app.use(express.json());
 const PORT = process.env.PORT || 8080;
 const token = process.env.BOT_TOKEN;
 
-// --- CRASH FIX: ADDING ALLOWED UPDATES ---
-// We must tell Telegram to send 'chat_member' events specifically
+// 1. INITIALIZE BOT WITH ALL UPDATE TYPES
+// This ensures Telegram sends the "Join" notification to your bot
 const bot = new TelegramBot(token, { 
     polling: {
         params: {
-            allowed_updates: ["chat_member", "message", "callback_query"]
+            allowed_updates: ["chat_member", "message", "my_chat_member"]
         }
     }
 });
 
-// Error listener to keep the server alive if polling fails
 bot.on("polling_error", (err) => console.log("⚠️ Polling Error: " + err.message));
 
+// 2. WELCOME + AUTO-KICK + MESSAGE DELETE LOGIC
 bot.on("chat_member", async (update) => {
     try {
-        const newMember = update.new_chat_member;
-        const oldMember = update.old_chat_member;
-        const currentChatId = update.chat.id;
+        const chatId = update.chat.id;
+        const userId = update.new_chat_member.user.id;
+        const newStatus = update.new_chat_member.status;
+        const oldStatus = update.old_chat_member.status;
 
-        // Check if status changed from 'left' to 'member'
-        if (newMember.status === "member" && (oldMember.status === "left" || oldMember.status === "kicked")) {
-            const userId = newMember.user.id;
-            const welcomeText = "𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐏𝐑𝐎𝐍 𝐇𝐔𝐏 💦, 𝐘𝐎𝐔 𝐖𝐈𝐋𝐋 𝐁𝐄 𝐑𝐄𝐌𝐎𝐕𝐄𝐃 𝐅𝐑𝐎𝐌 𝐓𝐇𝐄 𝐆𝐑𝐎𝐔𝐏 𝐀𝐅𝐓𝐄𝐑 𝟓 𝐌𝐈𝐍𝐒 , 𝐖𝐄 𝐈𝐌𝐏𝐋𝐄𝐌𝐄𝐍𝐓𝐄𝐃 𝐓𝐇𝐈𝐒 𝐓𝐎 𝐀𝐕𝐎𝐈𝐃 𝐆𝐑𝐎𝐔𝐏 𝐁𝐀𝐍 ✨, 𝐔 𝐂𝐀𝐍 𝐀𝐂𝐂𝐄𝐒𝐒 𝐓𝐇𝐄 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 𝐀𝐆𝐀𝐈𝐍 𝐉𝐔𝐒𝐓 𝐁𝐘 𝐖𝐀𝐓𝐂𝐇𝐈𝐍𝐆 𝐎𝐍𝐄 𝐀𝐃𝐒💫";
+        console.log(`📡 EVENT: User ${userId} status changed in ${chatId} (${oldStatus} -> ${newStatus})`);
+
+        // Trigger only when someone actually joins as a member
+        if (newStatus === "member" && oldStatus !== "member") {
+            console.log(`🎯 JOIN DETECTED: User ${userId}. Starting 5-minute cycle.`);
+
+            const welcomeText = `𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐏𝐑𝐎𝐍 𝐇𝐔𝐏 💦, 𝐘𝐎𝐔 𝐖𝐈𝐋𝐋 𝐁𝐄 𝐑𝐄𝐌𝐎𝐕𝐄𝐃 𝐅𝐑𝐎𝐌 𝐓𝐇𝐄 𝐆𝐑𝐎𝐔𝐏 𝐀𝐅𝐓𝐄𝐑 𝟓 𝐌𝐈𝐍𝐒 , 𝐖𝐄 𝐈𝐌𝐏𝐋𝐄𝐌𝐄𝐍𝐓𝐄𝐃 𝐓𝐇𝐈𝐒 𝐓𝐎 𝐀𝐕𝐎𝐈𝐃 𝐆𝐑𝐎𝐔𝐏 𝐁𝐀𝐍 ✨, 𝐔 𝐂𝐀𝐍 𝐀𝐂𝐂𝐄𝐒𝐒 𝐓𝐇𝐄 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 𝐀𝐆𝐀𝐈𝐍 𝐉𝐔𝐒𝐓 𝐁𝐘 𝐖𝐀𝐓𝐂𝐇𝐈𝐍𝐆 𝐎𝐍𝐄 𝐀𝐃𝐒💫`;
             
-            // Send the message and save its ID
-            const sentMsg = await bot.sendMessage(currentChatId, welcomeText);
-            console.log("LOG: Welcome sent to user " + userId);
+            // Send Welcome Message
+            const sentMsg = await bot.sendMessage(chatId, welcomeText);
+            console.log(`✉️ Welcome message sent to User ${userId}`);
 
-            // Set 5-minute timer
+            // Start the 5-minute timer
             setTimeout(async () => {
                 try {
-                    // 1. Remove the user
-                    await bot.banChatMember(currentChatId, userId);
-                    await bot.unbanChatMember(currentChatId, userId);
-                    
-                    // 2. Delete the welcome message
-                    await bot.deleteMessage(currentChatId, sentMsg.message_id);
-                    
-                    console.log("✅ Cleanup complete for user " + userId);
-                } catch (cleanupErr) {
-                    console.log("❌ Timer cleanup failed: " + cleanupErr.message);
+                    // Kick and Unban (to allow re-entry later)
+                    await bot.banChatMember(chatId, userId);
+                    await bot.unbanChatMember(chatId, userId);
+                    console.log(`👞 User ${userId} kicked successfully.`);
+
+                    // Delete the specific welcome message for this user
+                    await bot.deleteMessage(chatId, sentMsg.message_id);
+                    console.log(`🗑️ Welcome message for User ${userId} deleted.`);
+                } catch (kickErr) {
+                    console.log(`❌ ERROR during kick/delete for ${userId}: ${kickErr.message}`);
                 }
-            }, 5 * 60 * 1000); 
+            }, 5 * 60 * 1000); // 5 Minutes
         }
-    } catch (eventErr) {
-        console.log("❌ ChatMember Event Error: " + eventErr.message);
+    } catch (err) {
+        console.log(`❌ CRITICAL EVENT ERROR: ${err.message}`);
     }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log("✅ Server successfully started on port " + PORT);
+    console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`);
+    bot.getMe().then(me => console.log(`🤖 BOT CONNECTED AS: @${me.username}`));
 });
 
-app.get("/", (req, res) => res.send("Bot is active and listening for members."));
+// Health Check
+app.get("/", (req, res) => res.send("Bot is monitoring " + PORT));
 
+// 3. LINK GENERATION ENDPOINT (40s EXPIRY)
 app.post("/getlink", async (req, res) => {
-    const { channelId } = req.body;
+    const { channelId, userId } = req.body;
     const targetChannel = channelId || process.env.GROUP_ID;
 
-    if (!targetChannel) return res.status(400).json({ success: false, error: "No Channel ID" });
+    console.log(`🔗 LINK REQUEST: Channel ${targetChannel} for User ${userId}`);
 
     try {
         const link = await bot.createChatInviteLink(targetChannel, {
-            expire_date: Math.floor(Date.now() / 1000) + 40,
+            expire_date: Math.floor(Date.now() / 1000) + 40, // 40 Seconds
             member_limit: 1
         });
         res.json({ success: true, invite_link: link.invite_link });
     } catch (err) {
+        // Fallback for strict channels
         try {
             const fallback = await bot.createChatInviteLink(targetChannel, {
                 expire_date: Math.floor(Date.now() / 1000) + 40
             });
             res.json({ success: true, invite_link: fallback.invite_link });
         } catch (finalErr) {
+            console.log(`❌ LINK FAILED: ${finalErr.message}`);
             res.status(500).json({ success: false, error: finalErr.message });
         }
     }
