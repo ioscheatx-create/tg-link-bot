@@ -3,8 +3,8 @@ import TelegramBot from "node-telegram-bot-api";
 import cors from "cors";
 
 // --- CRASH PREVENTION ---
-process.on('uncaughtException', (err) => console.error('🔥 CRITICAL ERROR (Uncaught):', err));
-process.on('unhandledRejection', (reason, promise) => console.error('🔥 CRITICAL ERROR (Rejection):', reason));
+process.on('uncaughtException', (err) => console.error('🔥 CRITICAL ERROR:', err));
+process.on('unhandledRejection', (reason) => console.error('🔥 CRITICAL REJECTION:', reason));
 
 const app = express();
 app.use(cors());
@@ -14,87 +14,85 @@ const PORT = process.env.PORT || 8080;
 const token = process.env.BOT_TOKEN;
 
 if (!token) {
-    console.error("❌ ERROR: BOT_TOKEN is missing in Railway Variables!");
-    process.exit(1); 
+    console.error("❌ ERROR: BOT_TOKEN is missing!");
+    process.exit(1);
 }
 
-// --- THE FIX: We MUST ask Telegram for "chat_member" updates ---
+// 1. INITIALIZE BOT: Tell Telegram we want to hear about "Join Requests"
 const bot = new TelegramBot(token, { 
     polling: {
         params: {
-            allowed_updates: ["chat_member", "message", "my_chat_member", "chat_join_request"]
+            allowed_updates: ["chat_join_request", "message", "chat_member"]
         }
     }
 });
 
-// --- STARTUP LOG ---
 bot.getMe().then(me => {
     console.log("-----------------------------------------");
-    console.log(`✅ SUCCESS: Bot is online as @${me.username}`);
-    console.log(`🚀 Server is listening on port ${PORT}`);
+    console.log(`✅ BOT IS LIVE: @${me.username}`);
+    console.log(`🚀 Web Server running on port ${PORT}`);
+    console.log("🟢 Listening for Join Requests...");
     console.log("-----------------------------------------");
-}).catch(err => console.log("❌ BOT STARTUP ERROR: " + err.message));
-
-// --- 1. MESSAGE DETECTOR ---
-bot.on("text", async (msg) => {
-    try {
-        console.log(`📩 Received: "${msg.text}" from Chat ID: ${msg.chat.id}`);
-        if (msg.text === "/test") {
-            await bot.sendMessage(msg.chat.id, "✅ Bot is working and can hear messages!");
-        }
-    } catch (e) { console.log("❌ Message Error: " + e.message); }
 });
 
-// --- 2. THE JOIN & 5-MIN KICK LOGIC ---
-bot.on("chat_member", async (update) => {
+// 2. THE NEW AUTO-APPROVE & KICK LOGIC
+bot.on("chat_join_request", async (request) => {
+    const chatId = request.chat.id;
+    const userId = request.from.id;
+    const userName = request.from.first_name || "User";
+
+    console.log(`🔔 REQUEST: ${userName} (${userId}) wants to join. Auto-approving...`);
+
     try {
-        const chatId = update.chat.id;
-        const userId = update.new_chat_member.user.id;
-        const newStatus = update.new_chat_member.status;
-        const oldStatus = update.old_chat_member.status;
+        // Step A: Approve the user so they are instantly let into the group
+        await bot.approveChatJoinRequest(chatId, userId);
+        console.log(`✅ APPROVED: ${userName} is now in the group.`);
 
-        // Log the exact status change to Railway
-        console.log(`📡 STATUS UPDATE: User ${userId} changed from '${oldStatus}' to '${newStatus}'`);
+        // Step B: Send the Welcome Message
+        const welcomeText = `𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐏𝐑𝐎𝐍 𝐇𝐔𝐏 💦, 𝐘𝐎𝐔 𝐖𝐈𝐋𝐋 𝐁𝐄 𝐑𝐄𝐌𝐎𝐕𝐄𝐃 𝐀𝐅𝐓𝐄𝐑 𝟓 𝐌𝐈𝐍𝐒.`;
+        const sentMsg = await bot.sendMessage(chatId, welcomeText);
+        console.log(`✉️ WELCOME SENT to ${userName}.`);
 
-        // Trigger when a user goes from NOT being a member, to being a member
-        if (newStatus === "member" && oldStatus !== "member") {
-            console.log(`🎯 JOIN DETECTED: User ${userId} joined. Sending welcome...`);
-            
-            const welcomeText = `𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐏𝐑𝐎𝐍 𝐇𝐔𝐏 💦, 𝐘𝐎𝐔 𝐖𝐈𝐋𝐋 𝐁𝐄 𝐑𝐄𝐌𝐎𝐕𝐄𝐃 𝐀𝐅𝐓𝐄𝐑 𝟓 𝐌𝐈𝐍𝐒.`;
-            const sentMsg = await bot.sendMessage(chatId, welcomeText);
-            console.log(`✉️ Welcome message sent to User ${userId}`);
+        // Step C: Start the 5-Minute Timer
+        setTimeout(async () => {
+            try {
+                // Kick the user and immediately unban them so they can come back later
+                await bot.banChatMember(chatId, userId);
+                await bot.unbanChatMember(chatId, userId);
+                console.log(`👞 SUCCESS: ${userName} (${userId}) removed after 5 mins.`);
 
-            // 5 Minute Timer (5 * 60 * 1000 milliseconds)
-            setTimeout(async () => {
-                try {
-                    await bot.banChatMember(chatId, userId);
-                    await bot.unbanChatMember(chatId, userId);
-                    await bot.deleteMessage(chatId, sentMsg.message_id);
-                    console.log(`👞 KICKED: User ${userId} removed and message deleted after 5 mins.`);
-                } catch (err) { 
-                    console.log(`❌ Kick/Cleanup Failed for ${userId}: ` + err.message); 
-                }
-            }, 5 * 60 * 1000);
-        }
-    } catch (err) { console.log("❌ Member Event Error: " + err.message); }
+                // Delete the welcome message to keep the chat clean
+                await bot.deleteMessage(chatId, sentMsg.message_id);
+                console.log(`🗑️ CLEANUP: Welcome text for ${userName} deleted.`);
+            } catch (err) {
+                console.log(`❌ ERROR DURING KICK/CLEANUP: ${err.message}`);
+            }
+        }, 5 * 60 * 1000); // 5 minutes in milliseconds
+
+    } catch (err) {
+        console.log(`❌ ERROR APPROVING USER: ${err.message}`);
+    }
 });
 
-// --- 3. THE LINK GENERATOR (FOR YOUR ADMIN PANEL) ---
+// 3. THE UPDATED LINK GENERATOR (For your Admin Panel)
 app.post("/getlink", async (req, res) => {
     const target = req.body.channelId || process.env.GROUP_ID;
-    console.log(`🔗 Requesting link for: ${target}`);
+    console.log(`🔗 GENERATING LINK FOR: ${target}`);
+    
     try {
         const link = await bot.createChatInviteLink(target, {
-            expire_date: Math.floor(Date.now() / 1000) + 40,
-            member_limit: 1
+            expire_date: Math.floor(Date.now() / 1000) + 40, // Expires in 40 seconds
+            creates_join_request: true // 👈 This forces the user into the Approval Queue
         });
+        
         res.json({ success: true, invite_link: link.invite_link });
     } catch (err) {
-        console.log("❌ Link Gen Error: " + err.message);
+        console.log(`❌ LINK ERROR: ${err.message}`);
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-app.get("/", (req, res) => res.send("Bot is Active"));
+// Basic health check endpoint
+app.get("/", (req, res) => res.send("Bot Monitoring System is Active."));
 
-app.listen(PORT, '0.0.0.0', () => console.log(`📡 Backend Web Server Live on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`📡 Backend Active`));
