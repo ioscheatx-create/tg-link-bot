@@ -48,12 +48,14 @@ bot.on("chat_join_request", async (request) => {
         await bot.approveChatJoinRequest(chatId, userId);
         console.log(`✅ APPROVED: ${userName} is now in the group.`);
 
+    
         // Step B: Send the Welcome Message
         const welcomeText = `𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐏𝐑𝐎𝐍 𝐇𝐔𝐏 💦, 𝐘𝐎𝐔 𝐖𝐈𝐋𝐋 𝐁𝐄 𝐑𝐄𝐌𝐎𝐕𝐄𝐃 𝐅𝐑𝐎𝐌 𝐓𝐇𝐄 𝐆𝐑𝐎𝐔𝐏 𝐀𝐅𝐓𝐄𝐑 𝟓 𝐌𝐈𝐍𝐒 , 𝐖𝐄 𝐈𝐌𝐏𝐋𝐄𝐌𝐄𝐍𝐓𝐄𝐃 𝐓𝐇𝐈𝐒 𝐓𝐎 𝐀𝐕𝐎𝐈𝐃 𝐆𝐑𝐎𝐔𝐏 𝐁𝐀𝐍 ✨, 𝐔 𝐂𝐀𝐍 𝐀𝐂𝐂𝐄𝐒𝐒 𝐓𝐇𝐄 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 𝐀𝐆𝐀𝐈𝐍 𝐉𝐔𝐒𝐓 𝐁𝐘 𝐖𝐀𝐓𝐂𝐇𝐈𝐍𝐆 𝐎𝐍𝐄 𝐀𝐃𝐒.`;
         const sentMsg = await bot.sendMessage(chatId, welcomeText);
         console.log(`✉️ WELCOME SENT to ${userName}.`);
 
         // Step C: Start the 5-Minute Timer
+      
         setTimeout(async () => {
             try {
                 // Kick the user and immediately unban them so they can come back later
@@ -67,12 +69,29 @@ bot.on("chat_join_request", async (request) => {
             } catch (err) {
                 console.log(`❌ ERROR DURING KICK/CLEANUP: ${err.message}`);
             }
-        }, 5 * 60 * 1000); // 5 minutes in milliseconds
+        }, 5 * 60 * 1000);
+        // 5 minutes in milliseconds
 
     } catch (err) {
         console.log(`❌ ERROR APPROVING USER: ${err.message}`);
     }
 });
+
+// ---------------------------------------------------------------
+// NEW ADDITION: AUTO-DELETE JOIN/LEAVE SYSTEM MESSAGES 
+// ---------------------------------------------------------------
+bot.on("message", async (msg) => {
+    // Check if the message is a system notification for someone joining or leaving/being removed
+    if (msg.new_chat_members || msg.left_chat_member) {
+        try {
+            await bot.deleteMessage(msg.chat.id, msg.message_id);
+            console.log(`🧹 CLEANUP: Deleted system message for join/leave/remove.`);
+        } catch (err) {
+            console.log(`❌ ERROR DELETING SYSTEM MSG: ${err.message}`);
+        }
+    }
+});
+// ---------------------------------------------------------------
 
 // 3. THE UPDATED LINK GENERATOR (For your Admin Panel)
 app.post("/getlink", async (req, res) => {
@@ -83,6 +102,7 @@ app.post("/getlink", async (req, res) => {
         const link = await bot.createChatInviteLink(target, {
             expire_date: Math.floor(Date.now() / 1000) + 40, // Expires in 40 seconds
             creates_join_request: true // 👈 This forces the user into the Approval Queue
+ 
         });
         
         res.json({ success: true, invite_link: link.invite_link });
