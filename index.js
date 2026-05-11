@@ -7,7 +7,7 @@ process.on('uncaughtException', (err) => console.error('🔥 CRITICAL ERROR:', e
 process.on('unhandledRejection', (reason) => console.error('🔥 CRITICAL REJECTION:', reason));
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' })); // Ensures your frontend can access it without CORS issues
 app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
@@ -18,7 +18,7 @@ if (!token) {
     process.exit(1);
 }
 
-// 1. INITIALIZE BOT: Tell Telegram we want to hear about "Join Requests"
+// 1. INITIALIZE BOT
 const bot = new TelegramBot(token, { 
     polling: {
         params: {
@@ -35,7 +35,7 @@ bot.getMe().then(me => {
     console.log("-----------------------------------------");
 });
 
-// 2. THE NEW AUTO-APPROVE & KICK LOGIC
+// 2. AUTO-APPROVE & KICK LOGIC
 bot.on("chat_join_request", async (request) => {
     const chatId = request.chat.id;
     const userId = request.from.id;
@@ -44,72 +44,63 @@ bot.on("chat_join_request", async (request) => {
     console.log(`🔔 REQUEST: ${userName} (${userId}) wants to join. Auto-approving...`);
 
     try {
-        // Step A: Approve the user so they are instantly let into the group
         await bot.approveChatJoinRequest(chatId, userId);
         console.log(`✅ APPROVED: ${userName} is now in the group.`);
 
-        // Step B: Send the Welcome Message
         const welcomeText = `𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐏𝐑𝐎𝐍 𝐇𝐔𝐏 💦, 𝐘𝐎𝐔 𝐖𝐈𝐋𝐋 𝐁𝐄 𝐑𝐄𝐌𝐎𝐕𝐄𝐃 𝐅𝐑𝐎𝐌 𝐓𝐇𝐄 𝐆𝐑𝐎𝐔𝐏 𝐀𝐅𝐓𝐄𝐑 𝟏𝟎 𝐌𝐈𝐍𝐒 , 𝐖𝐄 𝐈𝐌𝐏𝐋𝐄𝐌𝐄𝐍𝐓𝐄𝐃 𝐓𝐇𝐈𝐒 𝐓𝐎 𝐀𝐕𝐎𝐈𝐃 𝐆𝐑𝐎𝐔𝐏 𝐁𝐀𝐍 ✨, 𝐔 𝐂𝐀𝐍 𝐀𝐂𝐂𝐄𝐒𝐒 𝐓𝐇𝐄 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 𝐀𝐆𝐀𝐈𝐍 𝐉𝐔𝐒𝐓 𝐁𝐘 𝐖𝐀𝐓𝐂𝐇𝐈𝐍𝐆 𝐎𝐍𝐄 𝐀𝐃𝐒.`;
         const sentMsg = await bot.sendMessage(chatId, welcomeText);
-        console.log(`✉️ WELCOME SENT to ${userName}.`);
-
-        // Step C: Start the 10-Minute Timer
+        
         setTimeout(async () => {
             try {
-                // Kick the user and immediately unban them so they can come back later
                 await bot.banChatMember(chatId, userId);
                 await bot.unbanChatMember(chatId, userId);
-                console.log(`👞 SUCCESS: ${userName} (${userId}) removed after 10 mins.`);
+                console.log(`👞 SUCCESS: ${userName} removed after 10 mins.`);
                 
-                // Delete the welcome message to keep the chat clean
                 await bot.deleteMessage(chatId, sentMsg.message_id);
-                console.log(`🗑️ CLEANUP: Welcome text for ${userName} deleted.`);
             } catch (err) {
                 console.log(`❌ ERROR DURING KICK/CLEANUP: ${err.message}`);
             }
         }, 10 * 60 * 1000);
-        // 10 minutes in milliseconds
 
     } catch (err) {
         console.log(`❌ ERROR APPROVING USER: ${err.message}`);
     }
 });
 
-// ---------------------------------------------------------------
-// NEW ADDITION: AUTO-DELETE JOIN/LEAVE SYSTEM MESSAGES 
-// ---------------------------------------------------------------
+// AUTO-DELETE SYSTEM MESSAGES
 bot.on("message", async (msg) => {
-    // Check if the message is a system notification for someone joining or leaving/being removed
     if (msg.new_chat_members || msg.left_chat_member) {
         try {
             await bot.deleteMessage(msg.chat.id, msg.message_id);
-            console.log(`🧹 CLEANUP: Deleted system message for join/leave/remove.`);
-        } catch (err) {
-            console.log(`❌ ERROR DELETING SYSTEM MSG: ${err.message}`);
-        }
+        } catch (err) {}
     }
 });
-// ---------------------------------------------------------------
 
-// 3. THE UPDATED LINK GENERATOR (For your Admin Panel)
+// 3. LINK GENERATOR
 app.post("/getlink", async (req, res) => {
-    const target = req.body.channelId || process.env.GROUP_ID;
+    let target = req.body.channelId || process.env.GROUP_ID;
+    
+    if (!target || target === "undefined" || target === "") {
+        console.log("❌ LINK ERROR: No target Group ID provided by frontend.");
+        return res.status(400).json({ success: false, error: "Group ID is missing in database." });
+    }
+
+    // Ensure it's treated as a string to avoid numeric ID stripping issues
+    target = target.toString().trim();
     console.log(`🔗 GENERATING LINK FOR: ${target}`);
     
     try {
         const link = await bot.createChatInviteLink(target, {
-            expire_date: Math.floor(Date.now() / 1000) + 40, // Expires in 40 seconds
-            creates_join_request: true // 👈 This forces the user into the Approval Queue
+            expire_date: Math.floor(Date.now() / 1000) + 60, // Expires in 60 seconds for safety
+            creates_join_request: true 
         });
         
         res.json({ success: true, invite_link: link.invite_link });
     } catch (err) {
-        console.log(`❌ LINK ERROR: ${err.message}`);
+        console.log(`❌ LINK ERROR FOR [${target}]: ${err.message}`);
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Basic health check endpoint
 app.get("/", (req, res) => res.send("Bot Monitoring System is Active."));
-
-app.listen(PORT, '0.0.0.0', () => console.log(`📡 Backend Active`));
+app.listen(PORT, '0.0.0.0', () => console.log(`📡 Backend Active on ${PORT}`));
